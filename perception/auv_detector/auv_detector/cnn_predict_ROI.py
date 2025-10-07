@@ -53,7 +53,7 @@ class AnchorPointPredictor(Node):
         )
         self.bridge = CvBridge()
         self.model = AnchorPointCNN()
-        self.model.load_state_dict(torch.load('anchor_point_cnn.pth', map_location=torch.device('cpu')))
+        self.model.load_state_dict(torch.load('anchor_point_cnn_dynamic_roi_20251006_230047.pth', map_location=torch.device('cpu')))
         self.model.eval()
 
         self.input_size = (224, 224)
@@ -283,9 +283,37 @@ class AnchorPointPredictor(Node):
             ######################################################################################### 
             original_image = cv_image.copy()
 
+            # --- Convert to numpy for ROI detection ---
+            np_img = combined_preview.copy()
+            gray = np_img.mean(axis=2)  # average intensity
+            mask = gray > 30  # brightness threshold
+
+            if not mask.any():
+                # fallback to full image if object not found
+                left, top, right, bottom = 0, 0, np_img.shape[1], np_img.shape[0]
+            else:
+                ys, xs = np.where(mask)
+                top, bottom = ys.min(), ys.max()
+                left, right = xs.min(), xs.max()
+                pad = 10  # optional padding
+                left = max(0, left - pad)
+                top = max(0, top - pad)
+                right = min(np_img.shape[1], right + pad)
+                bottom = min(np_img.shape[0], bottom + pad)
+
+            # --- Crop the image to ROI ---
+            roi_img = np_img[top:bottom, left:right, :]
+
+            # --- Save top-left pixel coordinates ---
+            x0, y0 = left, top
+
+
             # Preprocess for CNN
             #pil_image = PILImage.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
-            pil_image = PILImage.fromarray(cv2.cvtColor(combined_preview, cv2.COLOR_BGR2RGB))
+            #pil_image = PILImage.fromarray(cv2.cvtColor(combined_preview, cv2.COLOR_BGR2RGB))
+            # --- Prepare ROI image for CNN ---
+            #cv2.imshow("roi_img", roi_img)
+            pil_image = PILImage.fromarray(cv2.cvtColor(roi_img, cv2.COLOR_BGR2RGB))
             input_tensor = self.transform(pil_image).unsqueeze(0)
 
             # Inference
@@ -293,11 +321,34 @@ class AnchorPointPredictor(Node):
                 output = self.model(input_tensor).squeeze().numpy()
 
             # Rescale to original image size
-            x_scale = self.orig_size[0] / self.input_size[0]
-            y_scale = self.orig_size[1] / self.input_size[1]
+            # x_scale = self.orig_size[0] / self.input_size[0]
+            # y_scale = self.orig_size[1] / self.input_size[1]
+            # x1, y1, x2, y2 = output
+            # x1, y1 = int(x1 * x_scale), int(y1 * y_scale)
+            # x2, y2 = int(x2 * x_scale), int(y2 * y_scale)
+
+
+            # --- Rescale prediction to ROI size ---
+            roi_width, roi_height = right - left, bottom - top
             x1, y1, x2, y2 = output
-            x1, y1 = int(x1 * x_scale), int(y1 * y_scale)
-            x2, y2 = int(x2 * x_scale), int(y2 * y_scale)
+
+            # Restore coordinates to original ROI size
+            x1 = int(x1 / self.input_size[0] * roi_width)
+            y1 = int(y1 / self.input_size[1] * roi_height)
+            x2 = int(x2 / self.input_size[0] * roi_width)
+            y2 = int(y2 / self.input_size[1] * roi_height)
+
+            # --- Add top-left pixel offset to restore to original image ---
+            x1 += x0
+            y1 += y0
+            x2 += x0
+            y2 += y0
+
+            # Clamp to original image
+            x1 = int(np.clip(x1, 0, cv_image.shape[1]-1))
+            y1 = int(np.clip(y1, 0, cv_image.shape[0]-1))
+            x2 = int(np.clip(x2, 0, cv_image.shape[1]-1))
+            y2 = int(np.clip(y2, 0, cv_image.shape[0]-1))
 
             # Draw predicted points
             cv2.circle(original_image, (x1, y1), 6, (0, 255, 0), -1)  # P1: Green
