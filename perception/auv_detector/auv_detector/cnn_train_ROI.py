@@ -49,11 +49,22 @@ class AnchorPointDataset(Dataset):
             transforms.ToTensor()
         ])
 
+        # Define possible rotation angles
+        self.angles = [0, 90, 180, 270]
+        #self.angles = [0, 180]
+
     def __len__(self):
-        return len(self.annotations)
+        # Each image produces 4 rotated versions
+        return len(self.annotations) * len(self.angles)
+
 
     def __getitem__(self, idx):
-        filename, coords = self.annotations[idx]
+        # Determine original image and rotation
+        angle_idx = idx % len(self.angles)
+        img_idx = idx // len(self.angles)
+        angle = self.angles[angle_idx]
+
+        filename, coords = self.annotations[img_idx]
         img_path = os.path.join(self.image_folder, filename)
         image = Image.open(img_path).convert("RGB")
 
@@ -94,24 +105,61 @@ class AnchorPointDataset(Dataset):
         y2_adj = np.clip(y2_adj, 0, roi_height)
 
         # --- Debug visualization ---
+        # if self.debug:
+        #     debug_img = cropped_img.copy()
+        #     cv2.circle(debug_img, (int(x1_adj), int(y1_adj)), 6, (0, 255, 0), -1)  # Green for P1
+        #     cv2.circle(debug_img, (int(x2_adj), int(y2_adj)), 6, (0, 0, 255), -1)  # Red for P2
+        #     cv2.putText(debug_img, "P1", (int(x1_adj) + 8, int(y1_adj) - 8),
+        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        #     cv2.putText(debug_img, "P2", (int(x2_adj) + 8, int(y2_adj) - 8),
+        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+
+        #     cv2.imshow("ROI Debug", debug_img)
+        #     key = cv2.waitKey(0)
+        #     if key == 27:  # Press ESC to quit early
+        #         cv2.destroyAllWindows()
+        #         exit(0)
+
+        # --- Convert cropped image back to PIL for transforms ---
+        # image = Image.fromarray(cropped_img)
+        # image = self.transform(image)
+
+        # --- Rotate image and adjust coordinates ---
+        image_pil = Image.fromarray(cropped_img)
+        if angle != 0:
+            image_pil = image_pil.rotate(angle, expand=True)  # rotate image
+
+            # Update coordinates according to rotation
+            if angle == 90:
+                x1_adj, y1_adj = y1_adj, roi_width - x1_adj
+                x2_adj, y2_adj = y2_adj, roi_width - x2_adj
+                roi_width, roi_height = roi_height, roi_width
+            elif angle == 180:
+                x1_adj, y1_adj = roi_width - x1_adj, roi_height - y1_adj
+                x2_adj, y2_adj = roi_width - x2_adj, roi_height - y2_adj
+            elif angle == 270:
+                x1_adj, y1_adj = roi_height - y1_adj, x1_adj
+                x2_adj, y2_adj = roi_height - y2_adj, x2_adj
+            # No change needed for 0°
+
+        # --- DEBUG: Show rotated image with adjusted points ---   
+        #  please turn off data shuffle "dataloader = DataLoader(dataset, batch_size=4, shuffle=True)"
         if self.debug:
-            debug_img = cropped_img.copy()
-            cv2.circle(debug_img, (int(x1_adj), int(y1_adj)), 6, (0, 255, 0), -1)  # Green for P1
-            cv2.circle(debug_img, (int(x2_adj), int(y2_adj)), 6, (0, 0, 255), -1)  # Red for P2
+            debug_img = np.array(image_pil)  # convert PIL to numpy for cv2
+            cv2.circle(debug_img, (int(x1_adj), int(y1_adj)), 6, (0, 255, 0), -1)  # P1
+            cv2.circle(debug_img, (int(x2_adj), int(y2_adj)), 6, (0, 0, 255), -1)  # P2
             cv2.putText(debug_img, "P1", (int(x1_adj) + 8, int(y1_adj) - 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
             cv2.putText(debug_img, "P2", (int(x2_adj) + 8, int(y2_adj) - 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-            cv2.imshow("ROI Debug", debug_img)
+            cv2.imshow(f"({angle} deg) Rotated ROI Debug ", debug_img)
             key = cv2.waitKey(0)
-            if key == 27:  # Press ESC to quit early
-                cv2.destroyAllWindows()
-                exit(0)
+            cv2.destroyAllWindows()
 
-        # --- Convert cropped image back to PIL for transforms ---
-        image = Image.fromarray(cropped_img)
-        image = self.transform(image)
+
+        # --- Apply transforms ---
+        image = self.transform(image_pil)
 
         # --- Scale coordinates to resized output ---
         x_scale = self.output_size[0] / roi_width
