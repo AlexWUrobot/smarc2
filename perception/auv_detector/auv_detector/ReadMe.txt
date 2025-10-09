@@ -2,6 +2,7 @@
 
 CNN Train FlowChart
 
+git checkout cnn 
 
 ~/colcon_ws/src/smarc2/scripts$ ./unity_ros_bridge.sh 
 
