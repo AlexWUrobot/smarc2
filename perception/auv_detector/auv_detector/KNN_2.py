@@ -83,6 +83,8 @@ class KNN(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
+        self.imshow_debug = True
+
     #     # Use a timer to periodically check for transform
     #     self.timer = self.create_timer(0.1, self.timer_callback)  # 10 Hz
 
@@ -269,8 +271,8 @@ class KNN(Node):
 
                 cv2.putText(cv_image_noted, f"AUV Area: {int(max_area)}", (cx + 10, cy - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-
-        cv2.imshow('HSV_auv', preview_auv)
+        if self.imshow_debug:
+            cv2.imshow('HSV_auv', preview_auv)
 
 
 
@@ -311,8 +313,8 @@ class KNN(Node):
             cv2.putText(preview_auv_2, f"AUV W/H: {best_ratio:.2f}", (center[0] + 10, center[1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-
-        cv2.imshow('HSV_auv_Missle_Shape Detect', preview_auv_2)
+        if self.imshow_debug:
+            cv2.imshow('HSV_auv_Missle_Shape Detect', preview_auv_2)
         #########################################################################################   rope
 
         # HSV filter for rope
@@ -476,7 +478,10 @@ class KNN(Node):
 
             cv2.putText(preview_rope_2, "Heading Point", (center_x_rope + 10, center_y_rope - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-            cv2.imshow("Curve Fitting", preview_rope_2)
+            
+
+            if self.imshow_debug:
+                cv2.imshow("Curve Fitting", preview_rope_2)
         # grid-based search require fully connection 
         # path_px = self.grid_path_from_rope(preview_rope_3, center_buoy, center_auv, cell_size=5)
 
@@ -534,12 +539,13 @@ class KNN(Node):
             # Draw heading
             if center_x_rope is not None:
                 arrow_start_point = (target_u, target_v)
-                arrow_end_point = (center_x_rope, center_y_rope)
+                #arrow_end_point = (center_x_rope, center_y_rope)
+                arrow_end_point = (int(center_between_auv_and_buoy[0]), int(center_between_auv_and_buoy[1]))
                 cv2.arrowedLine(combined_preview, arrow_start_point, arrow_end_point, (0, 255, 0), thickness=1, tipLength=0.3)
 
                 # Final 3D heading in camera frame
-                heading_x = (center_x_rope - cam_x) * cam_Z / fx
-                heading_y = (center_y_rope - cam_y) * cam_Z / fy
+                heading_x = (arrow_end_point[0] - cam_x) * cam_Z / fx
+                heading_y = (arrow_end_point[1] - cam_y) * cam_Z / fy
 
                 # Publish Target
                 target_position_msg = Float32MultiArray()
