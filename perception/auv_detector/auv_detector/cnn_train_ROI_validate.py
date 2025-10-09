@@ -39,7 +39,7 @@ class AnchorPointCNN(nn.Module):
     
 
 class AnchorPointDataset(Dataset):
-    def __init__(self, image_folder, annotations, output_size=(224, 224), debug=False):
+    def __init__(self, image_folder, annotations, output_size=(224, 224), debug=False, augment=True):
         self.image_folder = image_folder
         self.annotations = annotations
         self.output_size = output_size
@@ -50,7 +50,7 @@ class AnchorPointDataset(Dataset):
         ])
 
         # Define possible rotation angles
-        self.angles = [0, 90, 180, 270]
+        self.angles = [0, 90, 180, 270] if augment else [0]
         #self.angles = [0, 180]
 
     def __len__(self):
@@ -104,25 +104,7 @@ class AnchorPointDataset(Dataset):
         x2_adj = np.clip(x2_adj, 0, roi_width)
         y2_adj = np.clip(y2_adj, 0, roi_height)
 
-        # --- Debug visualization ---
-        # if self.debug:
-        #     debug_img = cropped_img.copy()
-        #     cv2.circle(debug_img, (int(x1_adj), int(y1_adj)), 6, (0, 255, 0), -1)  # Green for P1
-        #     cv2.circle(debug_img, (int(x2_adj), int(y2_adj)), 6, (0, 0, 255), -1)  # Red for P2
-        #     cv2.putText(debug_img, "P1", (int(x1_adj) + 8, int(y1_adj) - 8),
-        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-        #     cv2.putText(debug_img, "P2", (int(x2_adj) + 8, int(y2_adj) - 8),
-        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-        #     cv2.imshow("ROI Debug", debug_img)
-        #     key = cv2.waitKey(0)
-        #     if key == 27:  # Press ESC to quit early
-        #         cv2.destroyAllWindows()
-        #         exit(0)
-
-        # --- Convert cropped image back to PIL for transforms ---
-        # image = Image.fromarray(cropped_img)
-        # image = self.transform(image)
 
         # --- Rotate image and adjust coordinates ---
         image_pil = Image.fromarray(cropped_img)
@@ -198,30 +180,54 @@ def load_annotations(image_folder, annotation_folder):
 
 # ===== 4. Training Script =====
 def main():
-    image_folder = "for_cnn_training_combined_from_dema"
-    annotation_folder = "for_cnn_training_points_from_dema"
 
-    annotations = load_annotations(image_folder, annotation_folder)
-    dataset = AnchorPointDataset(image_folder, annotations)
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
-    model = AnchorPointCNN()
+    # --- Device setup ---
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f" Using device: {device}")
+    if torch.cuda.is_available():
+        print(f"   GPU name: {torch.cuda.get_device_name(0)}")
+
+
+    # --- Folders ---
+    train_img = "train_and_validate/90_10/train"
+    train_ann = "train_and_validate/90_10/train_annotation"
+    val_img = "train_and_validate/90_10/validate"
+    val_ann = "train_and_validate/90_10/validate_annotation"
+
+    # --- Load datasets ---
+    train_annotations = load_annotations(train_img, train_ann)
+    val_annotations = load_annotations(val_img, val_ann)
+
+    train_dataset = AnchorPointDataset(train_img, train_annotations, augment=True)
+    val_dataset = AnchorPointDataset(val_img, val_annotations, augment=False)
+
+    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)   # validation, does not need the data augmentation (rotation)
+
+    # --- Model ---
+    model = AnchorPointCNN().to(device)
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-    # === Add date suffix ===
+    # --- Logging setup ---
     date_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_filename = f"anchor_point_cnn_dynamic_roi_{date_str}.pth"
-    log_filename = f"cnn_train_{date_str}.txt"
-    plot_filename = f"cnn_train_{date_str}.png"
+    model_filename = f"anchor_point_cnn_dynamic_roi_validate_{date_str}.pth"
+    log_filename = f"cnn_train_validate_{date_str}.txt"
+    plot_filename = f"cnn_train_validate_{date_str}.png"
 
     # === Logging containers ===
-    epoch_losses = []
+    #epoch_losses = []
+    train_losses, val_losses = [], []
 
+
+    # --- Training Loop ---
     with open(log_filename, "w") as f:
         for epoch in range(100):
+            model.train()
             running_loss = 0.0
-            for images, targets in dataloader:
+            for images, targets in train_loader:
+                images, targets = images.to(device), targets.to(device)
                 optimizer.zero_grad()
                 outputs = model(images)
                 loss = criterion(outputs, targets)
@@ -229,32 +235,45 @@ def main():
                 optimizer.step()
                 running_loss += loss.item()
 
-            avg_loss = running_loss / len(dataloader)
-            epoch_losses.append(avg_loss)
+            avg_train_loss = running_loss / len(train_loader)
+            train_losses.append(avg_train_loss)
 
-            #print(f"Epoch {epoch+1} | Loss: {running_loss / len(dataloader):.4f}")
-            # Print and log
-            log_line = f"Epoch {epoch+1} | Loss: {avg_loss:.4f}\n"
+            # --- Validation phase ---
+            model.eval()
+            val_loss_total = 0.0
+            with torch.no_grad():
+                for val_images, val_targets in val_loader:
+                    val_images, val_targets = val_images.to(device), val_targets.to(device)
+                    val_outputs = model(val_images)
+                    vloss = criterion(val_outputs, val_targets)
+                    val_loss_total += vloss.item()
+
+            avg_val_loss = val_loss_total / len(val_loader)
+            val_losses.append(avg_val_loss)
+
+            # --- Log ---
+            log_line = f"Epoch {epoch+1:03d} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}\n"
             print(log_line.strip())
             f.write(log_line)
-    
 
-    # Save model
+    # --- Save Model ---
     torch.save(model.state_dict(), model_filename)
     print(f"Model saved to {model_filename}")
 
 
-    # === Plot Epoch vs. Average Loss ===
-    plt.figure(figsize=(8,5))
-    plt.plot(range(1, len(epoch_losses)+1), epoch_losses, marker='o', linewidth=2)
-    plt.title("Training Loss per Epoch")
+    plt.figure(figsize=(8, 5))
+    plt.plot(range(1, len(train_losses)+1), train_losses, marker='o', label='Train Loss')
+    plt.plot(range(1, len(val_losses)+1), val_losses, marker='s', label='Validation Loss')
+    plt.title("Training & Validation Loss per Epoch")
     plt.xlabel("Epoch")
-    plt.ylabel("Average Training Loss")
+    plt.ylabel("Loss (MSE)")
+    plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(plot_filename)
     plt.close()
-    print(f"Loss curve saved to {plot_filename}")
+    print(f"Loss curves saved to {plot_filename}")
+
 
 if __name__ == "__main__":
     main()

@@ -53,7 +53,9 @@ class AnchorPointPredictor(Node):
         )
         self.bridge = CvBridge()
         self.model = AnchorPointCNN()
-        self.model.load_state_dict(torch.load('anchor_point_cnn_dynamic_roi_20251006_230047.pth', map_location=torch.device('cpu')))
+        #self.model.load_state_dict(torch.load('anchor_point_cnn_dynamic_roi_20251006_230047.pth', map_location=torch.device('cpu')))
+        self.model.load_state_dict(torch.load('anchor_point_cnn_dynamic_roi_validate_20251007_145648.pth', map_location=torch.device('cpu')))
+
         self.model.eval()
 
         self.input_size = (224, 224)
@@ -63,6 +65,7 @@ class AnchorPointPredictor(Node):
             transforms.ToTensor()
         ])
         self.rope_img_buffer = deque(maxlen=10)
+        self.imshow_debug = False
 
     def listener_callback(self, msg):
         try:
@@ -119,8 +122,8 @@ class AnchorPointPredictor(Node):
 
                     # Put area text
                     #cv2.putText(preview_buoy, f"Area: {int(max_area)}", (cx + 10, cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-            
-            cv2.imshow('HSV_buoy', preview_buoy)  
+            if self.imshow_debug:
+                cv2.imshow('HSV_buoy', preview_buoy)  
 
             #########################################################################################  auv
 
@@ -165,8 +168,8 @@ class AnchorPointPredictor(Node):
 
                     # Put area text
                     #cv2.putText(preview_auv, f"AUV Area: {int(max_area)}", (cx + 10, cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-
-            cv2.imshow('HSV_auv', preview_auv)
+            if self.imshow_debug:
+                cv2.imshow('HSV_auv', preview_auv)
 
 
 
@@ -226,7 +229,9 @@ class AnchorPointPredictor(Node):
             self.rope_img_buffer.append(preview_rope_3)
             for img_tmp in self.rope_img_buffer:
                 preview_rope_3 = cv2.add(preview_rope_3, img_tmp)
-            cv2.imshow("N frames rope detect", preview_rope_3)
+
+            if self.imshow_debug:
+                cv2.imshow("N frames rope detect", preview_rope_3)
 
 
         
@@ -266,7 +271,8 @@ class AnchorPointPredictor(Node):
 
                 # cv2.putText(preview_rope_2, "Heading Point", (center_x_rope + 10, center_y_rope - 10),
                 #                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-                cv2.imshow("Curve Fitting", preview_rope_2)
+                if self.imshow_debug:
+                    cv2.imshow("Curve Fitting", preview_rope_2)
 
 
             ######################################################################################### 
